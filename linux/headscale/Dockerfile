@@ -1,0 +1,37 @@
+FROM debian:12
+
+LABEL maintainer="Headscale Docker Deployment"
+LABEL description="Headscale - An open source implementation of the Tailscale control server"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package/headscale_0.28.0_linux_amd64.deb /tmp/headscale.deb
+
+RUN dpkg -i /tmp/headscale.deb \
+    && rm /tmp/headscale.deb
+
+RUN mkdir -p /var/run/headscale \
+    && chown -R headscale:headscale /var/lib/headscale \
+    && chown -R headscale:headscale /var/run/headscale \
+    && chmod 770 /var/run/headscale
+
+COPY config/config.yaml /etc/headscale/config.yaml
+
+RUN chown root:headscale /etc/headscale/config.yaml \
+    && chmod 640 /etc/headscale/config.yaml
+
+USER headscale
+
+EXPOSE 8080 9090 50443
+
+VOLUME ["/var/lib/headscale", "/var/run/headscale"]
+
+ENTRYPOINT ["/usr/bin/headscale"]
+CMD ["serve", "--config", "/etc/headscale/config.yaml"]

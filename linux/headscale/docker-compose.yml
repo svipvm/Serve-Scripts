@@ -1,0 +1,24 @@
+version: '3.3'
+
+services:
+  headscale:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: headscale
+    restart: unless-stopped
+    user: root
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+      - "50443:50443"
+    volumes:
+      - ./config/config.yaml:/etc/headscale/config.yaml:ro
+      - /opt/headscale/data:/var/lib/headscale
+      - /opt/headscale/run:/var/run/headscale
+    networks:
+      - headscale-network
+
+networks:
+  headscale-network:
+    driver: bridge
