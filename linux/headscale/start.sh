@@ -139,8 +139,15 @@ generate_caddy_config() {
     echo "生成 Caddy 配置文件..."
     
     local UI_PASSWORD="${UI_AUTH_PASSWORD:-headscale}"
-    local PASSWORD_HASH
-    PASSWORD_HASH=$(caddy hash-password --plaintext "$UI_PASSWORD" 2>/dev/null)
+    local PASSWORD_HASH='$2a$14$WBdqJBcNsSxNdolCWj7MS.armz2e2My2jiGToHMA/h6tVrtld54te'
+    
+    if command -v caddy &> /dev/null; then
+        local HASH
+        HASH=$(caddy hash-password --plaintext "$UI_PASSWORD" 2>/dev/null) && PASSWORD_HASH="$HASH"
+    else
+        local HASH
+        HASH=$(docker run --rm caddy:2.10.2 caddy hash-password --plaintext "$UI_PASSWORD" 2>/dev/null) && PASSWORD_HASH="$HASH"
+    fi
     
     cat > "${CADDY_CONFIG_DIR}/Caddyfile" << EOF
 {
@@ -226,8 +233,9 @@ configure_firewall() {
     echo "配置防火墙..."
     
     if ! command -v ufw &> /dev/null; then
-        echo "⚠ UFW 未安装，跳过防火墙配置"
-        return
+        echo "UFW 未安装，正在安装..."
+        apt-get install -y -qq ufw
+        echo "✓ UFW 已安装"
     fi
     
     ufw allow ${HEADSCALE_PORT:-8080}/tcp comment 'Headscale Control' || true
