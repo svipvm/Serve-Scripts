@@ -1,0 +1,24 @@
+version: '3.3'
+
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-client
+    hostname: tailscale-client
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - tailscale-socket:/var/run/tailscale
+    environment:
+      - TAILSCALE_AUTH_KEY=${TAILSCALE_AUTH_KEY}
+      - TS_LOGIN_SERVER=${TS_LOGIN_SERVER}
+    command: >
+      sh -c "
+        tailscaled --state=mem: --socket=/var/run/tailscale/tailscaled.sock --tun=userspace-networking &
+        sleep 5
+        tailscale up --login-server=${TS_LOGIN_SERVER} --auth-key=${TAILSCALE_AUTH_KEY} --accept-routes --advertise-exit-node --reset
+        tail -f /dev/null
+      "
+
+volumes:
+  tailscale-socket:
