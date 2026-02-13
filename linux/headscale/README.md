@@ -1,361 +1,370 @@
-# Headscale 服务
+# Headscale 部署项目
 
-Headscale 是一个开源的 Tailscale 控制服务器实现，允许您自建 Tailscale 控制服务器，无需依赖官方的 Tailscale 服务。
+Headscale 是一个开源的 Tailscale 控制服务器实现，本项目提供完整的 Docker 部署方案。
 
-## 什么是 Headscale？
-
-Headscale 是 Tailscale 控制服务器的开源替代方案，它提供了以下功能：
-
-- 自建 Tailscale 控制服务器
-- 完全控制您的设备和网络
-- 无需依赖官方 Tailscale 服务
-- 支持 DERP 中继服务器
-- 支持用户和设备管理
-- 兼容 Tailscale 客户端
-
-## 服务架构
-
-本部署使用 Docker Compose 来管理 Headscale 服务，包含以下组件：
+## 目录结构
 
 ```
-┌─────────────────────────────────────┐
-│         Headscale 服务             │
-│  ┌─────────────────────────────┐  │
-│  │   Headscale 容器          │  │
-│  │   - HTTP API (8080)       │  │
-│  │   - Debug API (9090)      │  │
-│  │   - DERP Server (8080)    │  │
-│  │   - STUN Server (3478)     │  │
-│  └─────────────────────────────┘  │
-└─────────────────────────────────────┘
+headscale/
+├── config/
+│   ├── config.yaml      # 配置模板（不会被修改）
+│   ├── derp.yaml        # 配置模板（不会被修改）
+│   └── Caddyfile        # 配置模板（不会被修改）
+├── package/
+│   ├── headscale_0.26.1_linux_amd64.deb
+│   └── headscale_0.26.1_linux_arm64.deb
+├── .env.example         # 环境变量模板
+├── .env                 # 环境变量配置（不提交到 git）
+├── docker-compose.yml   # Docker Compose 配置
+├── Dockerfile           # Headscale 镜像构建文件
+├── start.sh             # 一键部署脚本
+├── stop.sh              # 停止服务脚本
+├── restart.sh           # 重启服务脚本
+└── README.md            # 本文档
 ```
 
-## 功能特性
+## 部署后目录结构
 
-### 核心功能
-- ✅ 自建 Tailscale 控制服务器
-- ✅ 用户和设备管理
-- ✅ 内置 DERP 中继服务器
-- ✅ 内置 STUN 服务器
-- ✅ HTTP API 接口
-- ✅ Debug 和 Metrics 接口
-- ✅ 路由和出口节点支持
+```
+/opt/
+├── headscale/
+│   ├── config/
+│   │   ├── config.yaml  # 实际使用的配置
+│   │   └── derp.yaml    # 实际使用的配置
+│   ├── data/            # 数据库
+│   └── run/             # 运行时文件
+└── caddy/
+    ├── config/
+    │   └── Caddyfile    # 实际使用的配置
+    └── data/            # Caddy 数据
+```
 
-### 部署特性
-- ✅ Docker Compose 部署
-- ✅ 自适应 IP 检测
-- ✅ 自动配置更新
-- ✅ 配置文件自动备份
-- ✅ 支持本地和云服务器环境
+## 完整使用流程
 
-## 快速开始
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        部署 Headscale                            │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     创建用户 (users create)                      │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                    ┌───────────┴───────────┐
+                    ▼                       ▼
+┌───────────────────────────┐   ┌───────────────────────────┐
+│   创建 API Key             │   │   创建 PreAuth Key         │
+│   (用于 UI 登录)           │   │   (用于客户端注册)         │
+└───────────────────────────┘   └───────────────────────────┘
+                    │                       │
+                    ▼                       ▼
+┌───────────────────────────┐   ┌───────────────────────────┐
+│   访问 UI 管理界面         │   │   客户端注册到网络         │
+│   (输入 API Key 登录)      │   │   (tailscale up)          │
+└───────────────────────────┘   └───────────────────────────┘
+```
 
-### 环境要求
+---
 
-- Docker 20.10+
-- Docker Compose 1.29+
-- Python 3.x（用于部署脚本）
-- sudo 权限
+## 一、部署服务
 
-### 一键部署
-
-使用自适应部署脚本自动部署：
+### 1. 环境准备
 
 ```bash
-# 本地环境部署（自动检测 IP）
+# 克隆仓库
+git clone <repo-url>
+cd Serve-Scripts/linux/headscale
+
+# 复制配置文件
+cp .env.example .env
+
+# 编辑配置，设置 SERVER_HOST（必填）
+vi .env
+```
+
+### 2. 配置说明
+
+编辑 `.env` 文件，**必须设置 `SERVER_HOST`**：
+
+```bash
+# 服务器公网 IP 或域名（必填）
+SERVER_HOST=your-server-ip-or-domain
+```
+
+### 3. 一键部署
+
+```bash
 sudo ./start.sh
 ```
 
-### 手动部署
+脚本会自动：
+1. 从 `.env` 读取 `SERVER_HOST`
+2. 生成配置文件到 `/opt` 目录
+3. 创建数据目录
+4. 构建并启动服务
 
-如果需要手动部署：
+### 4. 访问服务
 
-```bash
-# 1. 克隆或下载项目
-cd linux/headscale
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| Headscale UI | `http://SERVER_IP:8008/web/` | 需要认证 |
+| Headscale API | `http://SERVER_IP:8081` | 需要 API Key |
+| Headscale 服务 | `http://SERVER_IP:8080` | 客户端连接 |
 
-# 2. 修改配置文件
-vim config/config.yaml
-vim config/derp.yaml
+---
 
-# 3. 启动服务
-sudo docker-compose up -d
+## 二、创建用户
 
-# 4. 查看服务状态
-sudo docker-compose ps
-```
-
-## 配置说明
-
-### 主配置文件 (config/config.yaml)
-
-主要配置项：
-
-```yaml
-# 服务器 URL（客户端连接地址）
-server_url: http://YOUR_IP:8080
-
-# 监听地址
-listen_addr: 0.0.0.0:8080
-
-# DERP 服务器配置
-derp:
-  server:
-    enabled: true
-    region_id: 999
-    region_code: "headscale"
-    region_name: "Headscale Embedded"
-```
-
-### DERP 配置文件 (config/derp.yaml)
-
-DERP 中继服务器配置：
-
-```yaml
-regions:
-  900:
-    regionid: 900
-    regioncode: "headscale"
-    regionname: "Headscale Embedded"
-    nodes:
-      - name: "headscale-embedded"
-        regionid: 900
-        hostname: "YOUR_IP"
-        stunport: 3478
-        derpport: 8080
-        ipv4: "YOUR_IP"
-```
-
-## 使用指南
-
-### 创建用户
+Headscale 需要先创建用户，客户端归属于用户。
 
 ```bash
-# 创建新用户
-sudo docker exec headscale headscale users create user1
+# 创建用户
+sudo docker exec headscale headscale users create <用户名>
 
-# 列出所有用户
+# 查看用户列表
 sudo docker exec headscale headscale users list
+
+# 示例
+sudo docker exec headscale headscale users create mynetwork
 ```
 
-### 连接客户端
+**输出示例：**
+```
+User created:
+ID: 1
+Name: mynetwork
+```
 
-#### Linux 客户端
+---
+
+## 三、创建 API Key（用于 UI 登录）
+
+API Key 用于 headscale-ui 登录和 API 调用。
 
 ```bash
-# 安装 Tailscale
+# 创建长期有效的 API Key（10 年）
+sudo docker exec headscale headscale apikeys create --expiration 87600h
+
+# 查看所有 API Key
+sudo docker exec headscale headscale apikeys list
+```
+
+**输出示例：**
+```
+GoUQsq_.EyXHXFzlkHckX3rTlqHU4OjuyBYywI1y
+```
+
+⚠️ **Key 只在创建时显示一次，请立即保存！**
+
+### UI 登录步骤
+
+1. 访问 `http://SERVER_IP:8008/web/`
+2. 输入 Basic Auth 用户名密码（默认：admin / headscale）
+3. 在 UI 中输入服务器地址：`http://SERVER_IP:8081`
+4. 输入 API Key 完成登录
+
+---
+
+## 四、创建 PreAuth Key（用于客户端注册）
+
+PreAuth Key 用于 Tailscale 客户端注册到 Headscale。
+
+```bash
+# 创建长期有效的 PreAuth Key（1 年，可重复使用）
+sudo docker exec headscale headscale preauthkeys create --user <用户ID> --reusable --expiration 8760h
+
+# 查看所有 PreAuth Key
+sudo docker exec headscale headscale preauthkeys list --user <用户ID>
+
+# 示例（用户 ID 为 1）
+sudo docker exec headscale headscale preauthkeys create --user 1 --reusable --expiration 8760h
+```
+
+**输出示例：**
+```
+b0ec51f9dde9ef4a86a306a746e4f8d32e1c6d728fac0f37
+```
+
+⚠️ **Key 只在创建时显示一次，请立即保存！**
+
+---
+
+## 五、客户端注册
+
+### Linux/macOS
+
+```bash
+# 安装 Tailscale 客户端
 curl -fsSL https://tailscale.com/install.sh | sh
 
-# 连接到 Headscale 服务器
-sudo tailscale up --login-server=http://YOUR_IP:8080 --auth-key=YOUR_AUTH_KEY
+# 注册到 Headscale
+sudo tailscale up --login-server=http://SERVER_IP:8080 --authkey=<PREAUTH_KEY>
 ```
 
-#### Docker 客户端
+### Windows
 
-```bash
-# 使用 Docker 运行 Tailscale 客户端
-sudo docker-compose -f docker-compose.tailscale.yml up -d
+```powershell
+# 下载安装 Tailscale 客户端后
+tailscale up --login-server=http://SERVER_IP:8080 --authkey=<PREAUTH_KEY>
 ```
 
-### 管理节点
+### 验证连接
 
 ```bash
-# 列出所有节点
+# 查看连接状态
+tailscale status
+
+# 查看网络中的所有节点
+sudo docker exec headscale headscale nodes list
+```
+
+---
+
+## 六、日常管理
+
+### 服务管理
+
+```bash
+# 启动服务
+sudo ./start.sh
+
+# 停止服务
+sudo ./stop.sh
+
+# 重启服务
+sudo ./restart.sh
+
+# 查看日志
+sudo docker-compose logs -f headscale
+```
+
+### 节点管理
+
+```bash
+# 查看所有节点
 sudo docker exec headscale headscale nodes list
 
 # 删除节点
-sudo docker exec headscale headscale nodes delete <node-id>
+sudo docker exec headscale headscale nodes delete --id <节点ID>
 
-# 重命名节点
-sudo docker exec headscale headscale nodes rename <node-id> <new-name>
+# 使节点过期
+sudo docker exec headscale headscale nodes expire --id <节点ID>
 ```
 
-### 生成认证密钥
+### Key 管理
 
 ```bash
-# 生成临时认证密钥（24小时有效）
-sudo docker exec headscale headscale preauthkeys create -e 24h
+# API Key
+sudo docker exec headscale headscale apikeys list
+sudo docker exec headscale headscale apikeys expire --prefix <前缀>
 
-# 列出所有认证密钥
-sudo docker exec headscale headscale preauthkeys list
-
-# 删除认证密钥
-sudo docker exec headscale headscale preauthkeys delete <key-id>
+# PreAuth Key
+sudo docker exec headscale headscale preauthkeys list --user <用户ID>
+sudo docker exec headscale headscale preauthkeys expire --id <ID>
 ```
 
-## 服务管理
+---
 
-### 查看服务状态
+## 配置说明
+
+### 环境变量 (.env)
 
 ```bash
-# 查看容器状态
-sudo docker-compose ps
+# 服务器公网 IP 或域名（必填）
+SERVER_HOST=your-server-ip-or-domain
 
-# 查看服务日志
-sudo docker logs -f headscale
+# 端口配置
+HEADSCALE_PORT=8080          # Headscale 主服务端口
+HEADSCALE_STUN_PORT=3478     # STUN/DERP 端口
+UI_HTTP_PORT=8008            # UI 访问端口
+UI_API_PORT=8081             # API 代理端口
 
-# 查看实时日志
-sudo docker-compose logs -f
+# UI 认证
+UI_AUTH_USER=admin           # Basic Auth 用户名
+UI_AUTH_PASSWORD=headscale   # Basic Auth 密码
 ```
 
-### 重启服务
+### 端口说明
 
-```bash
-# 重启 Headscale 服务
-sudo docker-compose restart
+| 端口 | 服务 | 公网访问 | 说明 |
+|------|------|----------|------|
+| 8080 | Headscale | ✅ 是 | Tailscale 客户端连接 |
+| 3478/udp | STUN/DERP | ✅ 是 | NAT 穿透 |
+| 8008 | UI (Caddy) | ✅ 是 | 管理界面（Basic Auth） |
+| 8081 | API (Caddy) | ✅ 是 | API 代理（API Key） |
+| 9090 | Metrics | ❌ 否 | 监控指标（仅内网） |
+| 50443 | gRPC | ❌ 否 | 远程控制（仅内网） |
 
-# 停止服务
-sudo docker-compose down
+### DERP 服务器
 
-# 启动服务
-sudo docker-compose up -d
-```
+本项目默认启用嵌入式 DERP 服务器：
 
-### 更新服务
+- **状态**: 已启用
+- **STUN 端口**: 3478/udp
+- **功能**: NAT 穿透，帮助客户端建立直连
 
-```bash
-# 重新构建并启动
-sudo docker-compose up -d --build
+---
 
-# 拉取最新镜像
-sudo docker-compose pull
-sudo docker-compose up -d
-```
+## Key 有效期参考
 
-## 端口说明
+| 时间 | 参数值 |
+|------|--------|
+| 1 小时 | `1h` |
+| 1 天 | `24h` |
+| 90 天 | `90d` |
+| 1 年 | `8760h` |
+| 10 年 | `87600h` |
 
-| 端口 | 协议 | 用途 |
-|------|------|------|
-| 8080 | TCP | Headscale HTTP API 和 DERP 服务器 |
-| 9090 | TCP | Debug 和 Metrics 接口 |
-| 3478 | UDP | STUN 服务器 |
-| 50443 | TCP | 备用端口 |
-
-## 数据持久化
-
-服务使用以下目录进行数据持久化：
-
-- `/opt/headscale/data`：Headscale 数据目录
-- `/opt/headscale/run`：Headscale 运行时目录
-
-## 故障排除
-
-### 服务无法启动
-
-```bash
-# 检查端口占用
-sudo netstat -tunlp | grep -E "8080|9090|3478"
-
-# 查看容器日志
-sudo docker logs headscale
-
-# 检查 Docker 服务状态
-sudo systemctl status docker
-```
-
-### 客户端无法连接
-
-```bash
-# 检查防火墙设置
-sudo ufw status
-
-# 开放必要端口
-sudo ufw allow 8080/tcp
-sudo ufw allow 3478/udp
-
-# 检查 Headscale 服务状态
-sudo docker exec headscale headscale status
-```
-
-### DERP 中继不工作
-
-```bash
-# 检查 DERP 配置
-sudo docker exec headscale headscale derp check
-
-# 查看 DERP 服务器日志
-sudo docker logs headscale | grep -i derp
-```
+---
 
 ## 安全建议
 
-1. **使用 HTTPS**：在生产环境中，建议使用反向代理（如 Nginx）配置 HTTPS
-2. **防火墙配置**：只开放必要的端口
-3. **认证密钥管理**：定期轮换认证密钥
-4. **访问控制**：配置适当的访问控制策略
-5. **备份策略**：定期备份 `/opt/headscale/data` 目录
+1. **修改默认密码**：修改 `.env` 中的 `UI_AUTH_PASSWORD`
+2. **使用 HTTPS**：生产环境建议配置域名和 SSL 证书
+3. **防火墙配置**：仅开放必要端口
+4. **定期备份**：备份 `/opt/headscale/data/` 目录
+5. **定期轮换 Key**：建议每年更换 API Key
 
-## 高级配置
+---
 
-### 配置反向代理
+## 故障排查
 
-使用 Nginx 作为反向代理：
+### 查看日志
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name your-domain.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
+```bash
+sudo docker logs headscale
+sudo docker logs caddy
 ```
 
-### 配置多个 DERP 节点
+### 常见问题
 
-编辑 `config/derp.yaml` 添加更多 DERP 节点：
+1. **UI 无法访问**
+   - 检查 Caddy 容器是否正常运行
+   - 检查防火墙是否开放 8008 端口
 
-```yaml
-regions:
-  900:
-    regionid: 900
-    regioncode: "headscale"
-    regionname: "Headscale Embedded"
-    nodes:
-      - name: "node1"
-        regionid: 900
-        hostname: "node1.example.com"
-        stunport: 3478
-        derpport: 8080
-        ipv4: "1.2.3.4"
-      - name: "node2"
-        regionid: 900
-        hostname: "node2.example.com"
-        stunport: 3478
-        derpport: 8080
-        ipv4: "5.6.7.8"
-```
+2. **客户端无法连接**
+   - 检查 8080 和 3478/udp 端口是否开放
+   - 检查 PreAuth Key 是否有效
+   - 检查 DERP 服务器是否启用
 
-## 相关资源
+3. **API 调用返回 401**
+   - 检查 API Key 是否正确
+   - 检查 API Key 是否过期
 
-- [Headscale 官方文档](https://headscale.juanfont.net/)
-- [Tailscale 官方文档](https://tailscale.com/kb/)
+---
+
+## 版本信息
+
+| 组件 | 版本 |
+|------|------|
+| Headscale | 0.26.1 |
+| Headscale-UI | 2025.08.23 |
+| Caddy | 2.10.2 |
+
+## 参考资料
+
+- [Headscale 官方文档](https://headscale.net/)
 - [Headscale GitHub](https://github.com/juanfont/headscale)
-- [Docker Hub](https://hub.docker.com/r/headscale/headscale)
-
-## 许可证
-
-本项目遵循 MIT 许可证。
-
-## 支持
-
-如有问题或建议，请：
-
-1. 查看本文档的故障排除部分
-2. 查看官方文档
-3. 提交 Issue 或 Pull Request
-
-## 更新日志
-
-### v1.0.0
-- 初始版本
-- 支持 Docker Compose 部署
-- 自适应部署脚本
-- 内置 DERP 服务器
-- 完整的文档
+- [Headscale-UI GitHub](https://github.com/gurucomputing/headscale-ui)
+- [Tailscale 官方文档](https://tailscale.com/kb/)

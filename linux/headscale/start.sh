@@ -3,12 +3,13 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="$SCRIPT_DIR/config"
-CONFIG_FILE="$CONFIG_DIR/config.yaml"
-DERP_FILE="$CONFIG_DIR/derp.yaml"
+ENV_FILE="$SCRIPT_DIR/.env"
+
+HEADSCALE_CONFIG_DIR="/opt/headscale/config"
+CADDY_CONFIG_DIR="/opt/caddy/config"
 
 echo "=========================================="
-echo "Headscale 自适应部署脚本"
+echo "Headscale 部署脚本"
 echo "=========================================="
 
 check_root() {
@@ -19,302 +20,289 @@ check_root() {
     fi
 }
 
-detect_ip() {
-    echo "自动检测 IP 地址..."
-    
-    if command -v hostname &> /dev/null; then
-        IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    elif command -v ip &> /dev/null; then
-        IP=$(ip route get 1 2>/dev/null | awk '{print $7}')
-    else
-        echo "错误: 无法检测到本地 IP 地址"
+load_env() {
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "错误: .env 文件不存在"
+        echo "请复制 .env.example 为 .env 并配置 SERVER_HOST"
         exit 1
     fi
     
-    if [ -z "$IP" ]; then
-        echo "错误: IP 检测失败"
+    set -a
+    source "$ENV_FILE"
+    set +a
+    
+    if [ -z "$SERVER_HOST" ] || [ "$SERVER_HOST" = "your-server-ip-or-domain" ]; then
+        echo "错误: 请在 .env 中设置 SERVER_HOST"
         exit 1
     fi
     
-    echo "检测到本地 IP 地址: $IP"
-    echo "$IP"
-}
-
-update_config() {
-    local ip=$1
-    local config_file=$2
-    
-    if [ ! -f "$config_file" ]; then
-        echo "错误: 配置文件不存在: $config_file"
-        return 1
-    fi
-    
-    echo "更新 $config_file 中的配置..."
-    
-    sed -i "s|^server_url:.*|server_url: http://$ip:80|" "$config_file"
-    sed -i "s|^listen_addr:.*|listen_addr: 0.0.0.0:8080|" "$config_file"
-    sed -i "s|^metrics_listen_addr:.*|metrics_listen_addr: 0.0.0.0:9090|" "$config_file"
-    sed -i "s|^grpc_listen_addr:.*|grpc_listen_addr: 0.0.0.0:50443|" "$config_file"
-    
-    echo "✓ 已更新 $config_file 中的配置"
-    return 0
-}
-
-update_derp_config() {
-    local ip=$1
-    local derp_file=$2
-    
-    if [ ! -f "$derp_file" ]; then
-        echo "错误: DERP 配置文件不存在: $derp_file"
-        return 1
-    fi
-    
-    echo "更新 $derp_file 中的 DERP 配置..."
-    
-    sed -i "s|hostname: \".*\"|hostname: \"$ip\"|" "$derp_file"
-    sed -i "s|ipv4: \".*\"|ipv4: \"$ip\"|" "$derp_file"
-    
-    echo "✓ 已更新 $derp_file 中的 DERP 配置"
-    return 0
-}
-
-check_docker() {
-    if ! command -v docker &> /dev/null; then
-        echo "错误: Docker 未安装，请先安装 Docker"
-        exit 1
-    fi
-    
-    if ! docker info &> /dev/null; then
-        echo "错误: 无法连接到 Docker 守护进程或没有 Docker 权限"
-        echo "请确保 Docker 服务正在运行，并且当前用户有权限访问 Docker"
-        exit 1
-    fi
-    
-    echo "✓ Docker 已安装且可用"
-}
-
-check_docker_compose() {
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-        echo "错误: Docker Compose 未安装，请先安装 Docker Compose"
-        exit 1
-    fi
-    echo "✓ Docker Compose 已安装"
+    echo "服务器地址: $SERVER_HOST"
 }
 
 create_directories() {
     echo ""
-    echo "创建必要的目录结构..."
+    echo "创建目录..."
+    
     mkdir -p /opt/headscale/data /opt/headscale/run
-    chmod 770 /opt/headscale/data
-    chmod 770 /opt/headscale/run
-    echo "✓ 目录结构创建完成: /opt/headscale"
+    mkdir -p "$HEADSCALE_CONFIG_DIR"
+    mkdir -p /opt/caddy/data
+    mkdir -p "$CADDY_CONFIG_DIR"
     
-    mkdir -p /opt/caddy/data /opt/caddy/config
-    chmod 770 /opt/caddy/data /opt/caddy/config
-    echo "✓ Caddy 目录创建完成: /opt/caddy"
+    echo "✓ 目录创建完成"
 }
 
-build_image() {
+generate_headscale_config() {
     echo ""
-    echo "构建 Headscale Docker 镜像..."
-    if docker-compose build; then
-        echo "✓ 镜像构建完成"
-    else
-        echo "错误: 镜像构建失败"
+    echo "生成 Headscale 配置文件..."
+    
+    cat > "${HEADSCALE_CONFIG_DIR}/config.yaml" << EOF
+server_url: http://${SERVER_HOST}:${HEADSCALE_PORT:-8080}
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+grpc_listen_addr: 0.0.0.0:50443
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+derp:
+  server:
+    enabled: true
+    region_id: ${DERP_REGION_ID:-999}
+    region_code: "${DERP_REGION_CODE:-headscale}"
+    region_name: "${DERP_REGION_NAME:-Headscale Embedded DERP}"
+    stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+    ipv4: "${SERVER_HOST}"
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 24h
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+dns:
+  magic_dns: false
+  override_local_dns: false
+  nameservers:
+    global: []
+
+log:
+  format: text
+  level: info
+
+disable_check_updates: true
+ephemeral_node_inactivity_timeout: 30m
+randomize_client_port: true
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+EOF
+    
+    echo "✓ 生成 config.yaml"
+}
+
+generate_derp_config() {
+    echo ""
+    echo "生成 DERP 配置文件..."
+    
+    cat > "${HEADSCALE_CONFIG_DIR}/derp.yaml" << EOF
+regions:
+  900:
+    regionid: 900
+    regioncode: "headscale"
+    regionname: "Headscale Embedded DERP"
+    nodes:
+      - name: "headscale-embedded"
+        regionid: 900
+        hostname: "${SERVER_HOST}"
+        stunport: ${HEADSCALE_STUN_PORT:-3478}
+        derpport: ${HEADSCALE_PORT:-8080}
+        ipv4: "${SERVER_HOST}"
+        insecure_for_tests: true
+EOF
+    
+    echo "✓ 生成 derp.yaml"
+}
+
+generate_caddy_config() {
+    echo ""
+    echo "生成 Caddy 配置文件..."
+    
+    PASSWORD_HASH='$2a$14$WBdqJBcNsSxNdolCWj7MS.armz2e2My2jiGToHMA/h6tVrtld54te'
+    
+    cat > "${CADDY_CONFIG_DIR}/Caddyfile" << EOF
+{
+    auto_https off
+}
+
+:80 {
+    @api path /api/*
+    handle @api {
+        reverse_proxy host.docker.internal:${HEADSCALE_PORT:-8080}
+    }
+    
+    handle {
+        reverse_proxy headscale-ui:8080
+    }
+}
+
+:${UI_HTTP_PORT:-8008} {
+    basic_auth {
+        ${UI_AUTH_USER:-admin} ${PASSWORD_HASH}
+    }
+    
+    @web path /web*
+    handle @web {
+        reverse_proxy headscale-ui:8080
+    }
+    
+    handle {
+        redir /web/ permanent
+    }
+}
+
+:${UI_API_PORT:-8081} {
+    @preflight method OPTIONS
+    
+    handle @preflight {
+        header Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}"
+        header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header Access-Control-Allow-Credentials "true"
+        header Access-Control-Max-Age "86400"
+        respond "" 204
+    }
+    
+    handle {
+        reverse_proxy host.docker.internal:${HEADSCALE_PORT:-8080} {
+            header_down +Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}"
+            header_down +Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            header_down +Access-Control-Allow-Headers "Authorization, Content-Type"
+            header_down +Access-Control-Allow-Credentials "true"
+        }
+    }
+}
+EOF
+    
+    echo "✓ 生成 Caddyfile"
+}
+
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo "错误: Docker 未安装"
         exit 1
     fi
+    
+    if ! docker info &> /dev/null; then
+        echo "错误: 无法连接 Docker"
+        exit 1
+    fi
+    
+    echo "✓ Docker 已就绪"
 }
 
-stop_existing_container() {
+check_docker_compose() {
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        echo "错误: Docker Compose 未安装"
+        exit 1
+    fi
+    echo "✓ Docker Compose 已就绪"
+}
+
+deploy() {
     echo ""
-    echo "停止现有容器..."
+    echo "部署服务..."
     
-    if docker-compose ps | grep -q "headscale"; then
-        echo "停止现有 Headscale 容器..."
+    cd "$SCRIPT_DIR"
+    
+    if docker-compose ps 2>/dev/null | grep -q "Up"; then
+        echo "停止现有服务..."
         docker-compose down
-    else
-        echo "没有运行中的 Headscale 容器"
     fi
+    
+    echo "构建镜像..."
+    docker-compose build
+    
+    echo "启动服务..."
+    docker-compose up -d
+    
+    echo "✓ 服务已启动"
 }
 
-start_service() {
-    echo ""
-    echo "启动 Headscale 服务..."
-    
-    if docker-compose up -d; then
-        echo "✓ 服务启动成功"
-    else
-        echo "错误: 服务启动失败"
-        exit 1
-    fi
-}
-
-check_service_status() {
-    echo ""
-    echo "验证服务状态..."
-    sleep 5
-    
-    headscale_running=$(docker-compose ps | grep -q "headscale.*Up" && echo "yes" || echo "no")
-    headscale_ui_running=$(docker-compose ps | grep -q "headscale-ui.*Up" && echo "yes" || echo "no")
-    caddy_running=$(docker-compose ps | grep -q "caddy.*Up" && echo "yes" || echo "no")
-    
-    if [ "$headscale_running" = "yes" ]; then
-        echo "✅ Headscale 容器正在运行"
-    else
-        echo "警告: Headscale 服务可能未正常启动，请检查日志"
-    fi
-    
-    if [ "$headscale_ui_running" = "yes" ]; then
-        echo "✅ Headscale UI 容器正在运行"
-    else
-        echo "警告: Headscale UI 服务可能未正常启动，请检查日志"
-    fi
-    
-    if [ "$caddy_running" = "yes" ]; then
-        echo "✅ Caddy 反向代理容器正在运行"
-    else
-        echo "警告: Caddy 服务可能未正常启动，请检查日志"
-    fi
-    
-    if [ "$headscale_running" = "yes" ] || [ "$headscale_ui_running" = "yes" ] || [ "$caddy_running" = "yes" ]; then
-        echo ""
-        echo "服务信息:"
-        docker-compose ps
-        echo ""
-        echo "访问地址:"
-        echo "  - Headscale UI (通过 Caddy): http://localhost"
-        echo "  - Headscale UI (直接): http://localhost:8080"
-        echo "  - Headscale API (通过 Caddy): http://localhost/api"
-        echo "  - Metrics: http://localhost:9090"
-        echo "  - gRPC: localhost:50443"
-        echo ""
-        echo "查看日志:"
-        echo "  docker-compose logs -f"
-        echo "  docker-compose logs -f headscale"
-        echo "  docker-compose logs -f headscale-ui"
-        echo "  docker-compose logs -f caddy"
-        echo ""
-        echo "停止服务: ./stop.sh"
-        echo "重启服务: ./restart.sh"
-    else
-        echo "❌ 没有服务正在运行"
-        echo ""
-        echo "查看日志以排查问题:"
-        echo "  docker logs headscale"
-        echo "  docker logs headscale-ui"
-        echo "  docker logs caddy"
-        exit 1
-    fi
-}
-
-show_usage() {
-    echo "使用方法: $0 [选项]"
-    echo ""
-    echo "选项:"
-    echo "  -i, --ip IP_ADDRESS      指定 IP 地址（可选）"
-    echo "  -h, --help              显示帮助信息"
-    echo ""
-    echo "示例:"
-    echo "  sudo $0                          自动检测 IP 并部署"
-    echo "  sudo $0 -i 192.168.1.100       使用指定 IP 部署"
-    echo "  sudo $0 --ip 203.0.113.1      使用指定公网 IP 部署"
-    exit 0
-}
-
-main() {
-    local ip_address=""
-    
-    args=("$@")
-    i=0
-    while [ $i -lt ${#args[@]} ]; do
-        case "${args[$i]}" in
-            -i|--ip)
-                if [ $((i + 1)) -lt ${#args[@]} ]; then
-                    ip_address="${args[$((i + 1))]}"
-                    i=$((i + 2))
-                else
-                    echo "错误: -i/--ip 选项需要参数"
-                    exit 1
-                fi
-                ;;
-            -h|--help)
-                show_usage
-                ;;
-            *)
-                echo "未知选项: ${args[$i]}"
-                show_usage
-                ;;
-        esac
-        i=$((i + 1))
-    done
-    
-    echo "开始部署流程..."
-    echo ""
-    
-    echo "步骤 1: 检测 IP 地址"
-    detected_ip=$(detect_ip)
-    
-    if [ -z "$detected_ip" ]; then
-        echo "错误: IP 检测失败"
-        exit 1
-    fi
-    
-    if [ -n "$ip_address" ]; then
-        echo "使用指定的 IP 地址: $ip_address"
-        detected_ip="$ip_address"
-    fi
-    
-    echo ""
-    echo "步骤 2: 更新配置文件"
-    if ! update_config "$detected_ip" "$CONFIG_FILE"; then
-        exit 1
-    fi
-    if ! update_derp_config "$detected_ip" "$DERP_FILE"; then
-        exit 1
-    fi
-    
-    echo ""
-    echo "步骤 3: 检查 Docker 环境"
-    check_docker
-    check_docker_compose
-    create_directories
-    
-    echo ""
-    echo "步骤 4: 构建镜像"
-    build_image
-    
-    echo ""
-    echo "步骤 5: 停止现有容器"
-    stop_existing_container
-    
-    echo ""
-    echo "步骤 6: 启动 Headscale 服务"
-    start_service
-    
-    echo ""
-    echo "步骤 7: 验证服务状态"
-    check_service_status
-    
+show_info() {
     echo ""
     echo "=========================================="
     echo "部署完成！"
     echo "=========================================="
     echo ""
-    echo "配置信息:"
-    echo "  IP 地址: $detected_ip"
-    echo "  配置文件: $CONFIG_FILE"
-    echo "  DERP 配置: $DERP_FILE"
-    echo "  Caddy 配置: $CONFIG_DIR/Caddyfile"
+    echo "配置文件位置:"
+    echo "  Headscale: ${HEADSCALE_CONFIG_DIR}"
+    echo "  Caddy: ${CADDY_CONFIG_DIR}"
     echo ""
-    echo "查看日志:"
-    echo "  docker logs -f headscale"
-    echo "  docker logs -f headscale-ui"
-    echo "  docker logs -f caddy"
+    echo "访问地址:"
+    echo "  UI: http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}/web/"
+    echo "  API: http://${SERVER_HOST}:${UI_API_PORT:-8081}"
+    echo "  服务: http://${SERVER_HOST}:${HEADSCALE_PORT:-8080}"
     echo ""
-    echo "查看状态:"
-    echo "  docker-compose ps"
+    echo "UI 认证:"
+    echo "  用户名: ${UI_AUTH_USER:-admin}"
+    echo "  密码: ${UI_AUTH_PASSWORD:-headscale}"
+    echo ""
+    echo "DERP 服务器:"
+    echo "  状态: 已启用"
+    echo "  STUN 端口: ${HEADSCALE_STUN_PORT:-3478}/udp"
+    echo ""
+    echo "创建 API Key:"
+    echo "  sudo docker exec headscale headscale apikeys create --expiration 87600h"
+    echo ""
+    echo "创建 PreAuth Key:"
+    echo "  sudo docker exec headscale headscale users create <用户名>"
+    echo "  sudo docker exec headscale headscale preauthkeys create --user <ID> --reusable --expiration 8760h"
     echo ""
 }
 
-check_root
+main() {
+    check_root
+    
+    echo ""
+    echo "步骤 1/6: 加载配置"
+    load_env
+    
+    echo ""
+    echo "步骤 2/6: 创建目录"
+    create_directories
+    
+    echo ""
+    echo "步骤 3/6: 生成 Headscale 配置"
+    generate_headscale_config
+    
+    echo ""
+    echo "步骤 4/6: 生成 DERP 和 Caddy 配置"
+    generate_derp_config
+    generate_caddy_config
+    
+    echo ""
+    echo "步骤 5/6: 检查环境并部署"
+    check_docker
+    check_docker_compose
+    deploy
+    
+    echo ""
+    echo "步骤 6/6: 验证服务"
+    sleep 3
+    docker-compose ps
+    
+    show_info
+}
+
 main "$@"

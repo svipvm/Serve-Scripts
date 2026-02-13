@@ -14,20 +14,20 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package/headscale_0.28.0_linux_amd64.deb /tmp/packages/
-COPY package/headscale_0.28.0_linux_arm64.deb /tmp/packages/
+COPY package/headscale_0.26.1_linux_amd64.deb /tmp/packages/
+COPY package/headscale_0.26.1_linux_arm64.deb /tmp/packages/
 
 RUN case "$TARGETPLATFORM" in \
         "linux/amd64") \
-            cp /tmp/packages/headscale_0.28.0_linux_amd64.deb /tmp/headscale.deb ;; \
+            cp /tmp/packages/headscale_0.26.1_linux_amd64.deb /tmp/headscale.deb ;; \
         "linux/arm64") \
-            cp /tmp/packages/headscale_0.28.0_linux_arm64.deb /tmp/headscale.deb ;; \
+            cp /tmp/packages/headscale_0.26.1_linux_arm64.deb /tmp/headscale.deb ;; \
         "") \
             case "$(uname -m)" in \
                 x86_64) \
-                    cp /tmp/packages/headscale_0.28.0_linux_amd64.deb /tmp/headscale.deb ;; \
+                    cp /tmp/packages/headscale_0.26.1_linux_amd64.deb /tmp/headscale.deb ;; \
                 aarch64) \
-                    cp /tmp/packages/headscale_0.28.0_linux_arm64.deb /tmp/headscale.deb ;; \
+                    cp /tmp/packages/headscale_0.26.1_linux_arm64.deb /tmp/headscale.deb ;; \
                 *) \
                     echo "Error: Unsupported architecture $(uname -m). Only x86_64 and aarch64 are supported." && \
                     exit 1 ;; \

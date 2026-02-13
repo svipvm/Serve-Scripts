@@ -3,9 +3,45 @@
 }
 
 :80 {
-    reverse_proxy headscale-ui:8080
+    @api path /api/*
+    handle @api {
+        reverse_proxy host.docker.internal:8080
+    }
+    
+    handle {
+        reverse_proxy headscale-ui:8080
+    }
 }
 
-:8080 {
-    reverse_proxy headscale:8080
+:8008 {    
+    @web path /web*
+    handle @web {
+        reverse_proxy headscale-ui:8080
+    }
+    
+    handle {
+        redir /web/ permanent
+    }
+}
+
+:8081 {
+    @preflight method OPTIONS
+    
+    handle @preflight {
+        header Access-Control-Allow-Origin "http://127.0.0.1:8008"
+        header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header Access-Control-Allow-Credentials "true"
+        header Access-Control-Max-Age "86400"
+        respond "" 204
+    }
+    
+    handle {
+        reverse_proxy host.docker.internal:8080 {
+            header_down +Access-Control-Allow-Origin "http://127.0.0.1:8008"
+            header_down +Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            header_down +Access-Control-Allow-Headers "Authorization, Content-Type"
+            header_down +Access-Control-Allow-Credentials "true"
+        }
+    }
 }

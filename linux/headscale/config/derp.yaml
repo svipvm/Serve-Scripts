@@ -6,8 +6,8 @@ regions:
     nodes:
       - name: "headscale-embedded"
         regionid: 900
-        hostname: "192.168.110.16"
+        hostname: "127.0.0.1"
         stunport: 3478
         derpport: 8080
-        ipv4: "192.168.110.16"
+        ipv4: "127.0.0.1"
         insecure_for_tests: true
