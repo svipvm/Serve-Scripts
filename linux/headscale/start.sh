@@ -138,7 +138,9 @@ generate_caddy_config() {
     echo ""
     echo "生成 Caddy 配置文件..."
     
-    PASSWORD_HASH='$2a$14$WBdqJBcNsSxNdolCWj7MS.armz2e2My2jiGToHMA/h6tVrtld54te'
+    local UI_PASSWORD="${UI_AUTH_PASSWORD:-headscale}"
+    local PASSWORD_HASH
+    PASSWORD_HASH=$(caddy hash-password --plaintext "$UI_PASSWORD" 2>/dev/null)
     
     cat > "${CADDY_CONFIG_DIR}/Caddyfile" << EOF
 {
@@ -157,7 +159,7 @@ generate_caddy_config() {
 }
 
 :${UI_HTTP_PORT:-8008} {
-    basic_auth {
+    basicauth {
         ${UI_AUTH_USER:-admin} ${PASSWORD_HASH}
     }
     
@@ -219,6 +221,23 @@ check_docker_compose() {
     echo "✓ Docker Compose 已就绪"
 }
 
+configure_firewall() {
+    echo ""
+    echo "配置防火墙..."
+    
+    if ! command -v ufw &> /dev/null; then
+        echo "⚠ UFW 未安装，跳过防火墙配置"
+        return
+    fi
+    
+    ufw allow ${HEADSCALE_PORT:-8080}/tcp comment 'Headscale Control' || true
+    ufw allow ${HEADSCALE_STUN_PORT:-3478}/udp comment 'Headscale STUN' || true
+    ufw allow ${UI_HTTP_PORT:-8008}/tcp comment 'Headscale UI' || true
+    ufw allow ${UI_API_PORT:-8081}/tcp comment 'Headscale UI API' || true
+    
+    echo "✓ 防火墙规则已配置"
+}
+
 deploy() {
     echo ""
     echo "部署服务..."
@@ -275,30 +294,34 @@ main() {
     check_root
     
     echo ""
-    echo "步骤 1/6: 加载配置"
+    echo "步骤 1/7: 加载配置"
     load_env
     
     echo ""
-    echo "步骤 2/6: 创建目录"
+    echo "步骤 2/7: 创建目录"
     create_directories
     
     echo ""
-    echo "步骤 3/6: 生成 Headscale 配置"
+    echo "步骤 3/7: 生成 Headscale 配置"
     generate_headscale_config
     
     echo ""
-    echo "步骤 4/6: 生成 DERP 和 Caddy 配置"
+    echo "步骤 4/7: 生成 DERP 和 Caddy 配置"
     generate_derp_config
     generate_caddy_config
     
     echo ""
-    echo "步骤 5/6: 检查环境并部署"
+    echo "步骤 5/7: 配置防火墙"
+    configure_firewall
+    
+    echo ""
+    echo "步骤 6/7: 检查环境并部署"
     check_docker
     check_docker_compose
     deploy
     
     echo ""
-    echo "步骤 6/6: 验证服务"
+    echo "步骤 7/7: 验证服务"
     sleep 3
     docker-compose ps
     
