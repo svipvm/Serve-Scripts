@@ -14,10 +14,13 @@ services:
       - "50443:50443"
     volumes:
       - ./config/config.yaml:/etc/headscale/config.yaml:ro
+      - ./config/derp.yaml:/etc/headscale/derp.yaml:ro
       - /opt/headscale/data:/var/lib/headscale
       - /opt/headscale/run:/var/run/headscale
     networks:
       - headscale-network
+    extra_hosts:
+      - "headscale:172.18.0.2"
 
 networks:
   headscale-network:
