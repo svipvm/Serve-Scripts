@@ -10,3 +10,4 @@ regions:
         stunport: 3478
         derpport: 8080
         ipv4: "192.168.110.16"
+        insecure_for_tests: true

@@ -14,7 +14,7 @@ echo "=========================================="
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo "错误: 请使用 sudo 运行此脚本"
-        echo "示例: sudo ./deploy.sh"
+        echo "示例: sudo ./start.sh"
         exit 1
     fi
 }
@@ -43,29 +43,20 @@ detect_ip() {
 update_config() {
     local ip=$1
     local config_file=$2
-    local config_key=$3
     
     if [ ! -f "$config_file" ]; then
         echo "错误: 配置文件不存在: $config_file"
         return 1
     fi
     
-    echo "更新 $config_file 中的 $config_key..."
+    echo "更新 $config_file 中的配置..."
     
-    case "$config_key" in
-        server_url)
-            sed -i "s|^server_url:.*|server_url: http://$ip:8080|" "$config_file"
-            ;;
-        listen_addr)
-            sed -i "s|^listen_addr:.*|listen_addr: 0.0.0.0:8080|" "$config_file"
-            ;;
-        *)
-            echo "警告: 未知的配置键: $config_key"
-            return 1
-            ;;
-    esac
+    sed -i "s|^server_url:.*|server_url: http://$ip:80|" "$config_file"
+    sed -i "s|^listen_addr:.*|listen_addr: 0.0.0.0:8080|" "$config_file"
+    sed -i "s|^metrics_listen_addr:.*|metrics_listen_addr: 0.0.0.0:9090|" "$config_file"
+    sed -i "s|^grpc_listen_addr:.*|grpc_listen_addr: 0.0.0.0:50443|" "$config_file"
     
-    echo "✓ 已更新 $config_file 中的 $config_key"
+    echo "✓ 已更新 $config_file 中的配置"
     return 0
 }
 
@@ -80,8 +71,8 @@ update_derp_config() {
     
     echo "更新 $derp_file 中的 DERP 配置..."
     
-    sed -i 's|hostname: ".*"|hostname: "'"$ip"'"|' "$derp_file"
-    sed -i 's|ipv4: ".*"|ipv4: "'"$ip"'"|' "$derp_file"
+    sed -i "s|hostname: \".*\"|hostname: \"$ip\"|" "$derp_file"
+    sed -i "s|ipv4: \".*\"|ipv4: \"$ip\"|" "$derp_file"
     
     echo "✓ 已更新 $derp_file 中的 DERP 配置"
     return 0
@@ -92,7 +83,14 @@ check_docker() {
         echo "错误: Docker 未安装，请先安装 Docker"
         exit 1
     fi
-    echo "✓ Docker 已安装"
+    
+    if ! docker info &> /dev/null; then
+        echo "错误: 无法连接到 Docker 守护进程或没有 Docker 权限"
+        echo "请确保 Docker 服务正在运行，并且当前用户有权限访问 Docker"
+        exit 1
+    fi
+    
+    echo "✓ Docker 已安装且可用"
 }
 
 check_docker_compose() {
@@ -110,6 +108,10 @@ create_directories() {
     chmod 770 /opt/headscale/data
     chmod 770 /opt/headscale/run
     echo "✓ 目录结构创建完成: /opt/headscale"
+    
+    mkdir -p /opt/caddy/data /opt/caddy/config
+    chmod 770 /opt/caddy/data /opt/caddy/config
+    echo "✓ Caddy 目录创建完成: /opt/caddy"
 }
 
 build_image() {
@@ -152,25 +154,55 @@ check_service_status() {
     echo "验证服务状态..."
     sleep 5
     
-    if docker-compose ps | grep -q "Up"; then
+    headscale_running=$(docker-compose ps | grep -q "headscale.*Up" && echo "yes" || echo "no")
+    headscale_ui_running=$(docker-compose ps | grep -q "headscale-ui.*Up" && echo "yes" || echo "no")
+    caddy_running=$(docker-compose ps | grep -q "caddy.*Up" && echo "yes" || echo "no")
+    
+    if [ "$headscale_running" = "yes" ]; then
         echo "✅ Headscale 容器正在运行"
+    else
+        echo "警告: Headscale 服务可能未正常启动，请检查日志"
+    fi
+    
+    if [ "$headscale_ui_running" = "yes" ]; then
+        echo "✅ Headscale UI 容器正在运行"
+    else
+        echo "警告: Headscale UI 服务可能未正常启动，请检查日志"
+    fi
+    
+    if [ "$caddy_running" = "yes" ]; then
+        echo "✅ Caddy 反向代理容器正在运行"
+    else
+        echo "警告: Caddy 服务可能未正常启动，请检查日志"
+    fi
+    
+    if [ "$headscale_running" = "yes" ] || [ "$headscale_ui_running" = "yes" ] || [ "$caddy_running" = "yes" ]; then
         echo ""
         echo "服务信息:"
         docker-compose ps
         echo ""
         echo "访问地址:"
-        echo "  - HTTP API: http://localhost:8080"
+        echo "  - Headscale UI (通过 Caddy): http://localhost"
+        echo "  - Headscale UI (直接): http://localhost:8080"
+        echo "  - Headscale API (通过 Caddy): http://localhost/api"
         echo "  - Metrics: http://localhost:9090"
         echo "  - gRPC: localhost:50443"
         echo ""
-        echo "查看日志: docker-compose logs -f"
+        echo "查看日志:"
+        echo "  docker-compose logs -f"
+        echo "  docker-compose logs -f headscale"
+        echo "  docker-compose logs -f headscale-ui"
+        echo "  docker-compose logs -f caddy"
+        echo ""
         echo "停止服务: ./stop.sh"
         echo "重启服务: ./restart.sh"
     else
-        echo "❌ Headscale 容器未运行"
+        echo "❌ 没有服务正在运行"
         echo ""
         echo "查看日志以排查问题:"
         echo "  docker logs headscale"
+        echo "  docker logs headscale-ui"
+        echo "  docker logs caddy"
         exit 1
     fi
 }
@@ -234,10 +266,7 @@ main() {
     
     echo ""
     echo "步骤 2: 更新配置文件"
-    if ! update_config "$detected_ip" "$CONFIG_FILE" "server_url"; then
-        exit 1
-    fi
-    if ! update_config "$detected_ip" "$CONFIG_FILE" "listen_addr"; then
+    if ! update_config "$detected_ip" "$CONFIG_FILE"; then
         exit 1
     fi
     if ! update_derp_config "$detected_ip" "$DERP_FILE"; then
@@ -275,9 +304,12 @@ main() {
     echo "  IP 地址: $detected_ip"
     echo "  配置文件: $CONFIG_FILE"
     echo "  DERP 配置: $DERP_FILE"
+    echo "  Caddy 配置: $CONFIG_DIR/Caddyfile"
     echo ""
     echo "查看日志:"
     echo "  docker logs -f headscale"
+    echo "  docker logs -f headscale-ui"
+    echo "  docker logs -f caddy"
     echo ""
     echo "查看状态:"
     echo "  docker-compose ps"

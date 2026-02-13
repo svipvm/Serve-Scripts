@@ -9,18 +9,55 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "8080:8080"
       - "9090:9090"
       - "50443:50443"
+      - "3478:3478/udp"
     volumes:
       - ./config/config.yaml:/etc/headscale/config.yaml:ro
       - ./config/derp.yaml:/etc/headscale/derp.yaml:ro
       - /opt/headscale/data:/var/lib/headscale
       - /opt/headscale/run:/var/run/headscale
     networks:
+      headscale-network:
+        aliases:
+          - headscale
+          - headscale-api
+
+  headscale-ui:
+    image: ghcr.io/gurucomputing/headscale-ui:latest
+    container_name: headscale-ui
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    environment:
+      - HS_SERVER=http://headscale:8080
+    depends_on:
+      - headscale
+    networks:
+      headscale-network:
+        aliases:
+          - headscale-ui
+
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/caddy/data:/data
+      - /opt/caddy/config:/config
+    networks:
       - headscale-network
-    extra_hosts:
-      - "headscale:172.18.0.2"
+    depends_on:
+      - headscale
+      - headscale-ui
+    links:
+      - headscale
+      - headscale-ui
 
 networks:
   headscale-network:

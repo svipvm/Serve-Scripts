@@ -1,0 +1,11 @@
+{
+    auto_https off
+}
+
+:80 {
+    reverse_proxy headscale-ui:8080
+}
+
+:8080 {
+    reverse_proxy headscale:8080
+}

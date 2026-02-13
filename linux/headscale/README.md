@@ -63,10 +63,7 @@ Headscale 是 Tailscale 控制服务器的开源替代方案，它提供了以�
 
 ```bash
 # 本地环境部署（自动检测 IP）
-sudo python3 deploy.py
-
-# 云服务器部署（指定公网 IP）
-sudo python3 deploy.py -i YOUR_PUBLIC_IP
+sudo ./start.sh
 ```
 
 ### 手动部署
