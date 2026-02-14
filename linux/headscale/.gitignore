@@ -1,0 +1,27 @@
+# TLS 证书文件
+headscale.crt
+tls.crt
+tls.key
+
+# 部署日志
+headscale.log
+
+# 环境变量文件
+.env
+
+# 备份文件
+.env.backup.*
+
+# Docker 数据目录
+opt/
+
+# 编辑器临时文件
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db

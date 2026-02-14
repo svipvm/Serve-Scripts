@@ -8,7 +8,6 @@ TEMPLATE_DIR="$SCRIPT_DIR/config"
 
 HEADSCALE_CONFIG_DIR="/opt/headscale/config"
 CADDY_CONFIG_DIR="/opt/caddy/config"
-PASSWORD_HASH=""
 
 echo "=========================================="
 echo "Headscale 部署脚本"
@@ -57,6 +56,8 @@ generate_tls_certificates() {
     local TLS_ENABLED="${TLS_ENABLED:-true}"
     local TLS_CERT="${TLS_CERT_PATH:-/opt/headscale/config/tls.crt}"
     local TLS_KEY="${TLS_KEY_PATH:-/opt/headscale/config/tls.key}"
+    # 项目目录中的证书路径（只复制 crt，重命名为 headscale.crt）
+    local PROJECT_CERT="$SCRIPT_DIR/headscale.crt"
     
     if [ "$TLS_ENABLED" = "true" ]; then
         echo ""
@@ -72,11 +73,23 @@ generate_tls_certificates() {
             chmod 600 "$TLS_KEY"
             chmod 644 "$TLS_CERT"
             
+            # 复制证书到项目目录
+            cp "$TLS_CERT" "$PROJECT_CERT"
+            chmod 644 "$PROJECT_CERT"
+            
             echo "✓ 生成自签名证书 (有效期 10 年)"
-            echo "  证书: $TLS_CERT"
-            echo "  私钥: $TLS_KEY"
+            echo "  系统路径: $TLS_CERT"
+            echo "  系统路径: $TLS_KEY"
+            echo "  项目路径: $PROJECT_CERT (可导入 Windows 信任证书)"
+            echo "  提示: 项目目录中的证书已被 git 忽略，不会被提交"
         else
             echo "✓ 使用现有证书"
+            # 确保证书也存在于项目目录
+            if [ ! -f "$PROJECT_CERT" ]; then
+                cp "$TLS_CERT" "$PROJECT_CERT"
+                chmod 644 "$PROJECT_CERT"
+                echo "  已同步证书到项目目录: $PROJECT_CERT"
+            fi
         fi
     fi
 }
@@ -144,18 +157,11 @@ generate_caddy_config() {
         exit 1
     fi
     
-    local UI_PASSWORD="${UI_AUTH_PASSWORD:-headscale}"
-    PASSWORD_HASH=$(docker run --rm caddy:2.10.2 caddy hash-password --plaintext "$UI_PASSWORD")
-    
     cp "$TEMPLATE" "$OUTPUT"
     
     sed -i "s|\${SERVER_HOST}|${SERVER_HOST}|g" "$OUTPUT"
     sed -i "s|\${HEADSCALE_PORT}|${HEADSCALE_PORT:-8080}|g" "$OUTPUT"
-    sed -i "s|\${UI_HTTP_PORT}|${UI_HTTP_PORT:-8008}|g" "$OUTPUT"
-    sed -i "s|\${UI_API_PORT}|${UI_API_PORT:-8081}|g" "$OUTPUT"
     sed -i "s|\${CADDY_HTTPS_PORT}|${CADDY_HTTPS_PORT:-8443}|g" "$OUTPUT"
-    sed -i "s|\${UI_AUTH_USER}|${UI_AUTH_USER:-admin}|g" "$OUTPUT"
-    sed -i "s|\${PASSWORD_HASH}|${PASSWORD_HASH}|g" "$OUTPUT"
     
     echo "✓ 生成 Caddyfile"
 }
@@ -192,13 +198,25 @@ configure_firewall() {
         echo "✓ UFW 已安装"
     fi
     
-    ufw allow ${HEADSCALE_PORT:-8080}/tcp comment 'Headscale Control' || true
-    ufw allow ${HEADSCALE_STUN_PORT:-3478}/udp comment 'Headscale STUN' || true
-    ufw allow ${UI_HTTP_PORT:-8008}/tcp comment 'Headscale UI' || true
-    ufw allow ${UI_API_PORT:-8081}/tcp comment 'Headscale UI API' || true
-    ufw allow ${CADDY_HTTPS_PORT:-8443}/tcp comment 'Headscale HTTPS' || true
+    echo ""
+    echo "配置防火墙规则..."
+    echo "必需端口（建议云服务器安全组开放）:"
+    echo "  - ${CADDY_HTTPS_PORT:-8080}/tcp (Headscale HTTPS)"
+    echo "  - ${HEADSCALE_STUN_PORT:-3478}/udp (STUN/DERP)"
+    echo ""
+    echo "可选端口:"
+    echo "  - ${HEADSCALE_METRICS_PORT:-9090}/tcp (Metrics)"
+    echo ""
+    
+    ufw allow ${CADDY_HTTPS_PORT:-8080}/tcp comment 'Headscale HTTPS (必需)' || true
+    ufw allow ${HEADSCALE_STUN_PORT:-3478}/udp comment 'Headscale STUN/DERP (必需)' || true
+    ufw allow ${HEADSCALE_METRICS_PORT:-9090}/tcp comment 'Headscale Metrics (可选)' || true
     
     echo "✓ 防火墙规则已配置"
+    echo ""
+    echo "⚠️  重要提醒："
+    echo "   如果使用云服务器（阿里云/腾讯云/AWS等），"
+    echo "   请登录控制台添加安全组规则开放以上端口！"
 }
 
 deploy() {
@@ -222,47 +240,65 @@ deploy() {
 }
 
 show_info() {
-    echo ""
-    echo "=========================================="
-    echo "部署完成！"
-    echo "=========================================="
-    echo ""
-    echo "配置文件位置:"
-    echo "  Headscale: ${HEADSCALE_CONFIG_DIR}"
-    echo "  Caddy: ${CADDY_CONFIG_DIR}"
-    echo ""
-    local TLS_ENABLED="${TLS_ENABLED:-true}"
-    local PROTOCOL="https"
-    [ "$TLS_ENABLED" != "true" ] && PROTOCOL="http"
+    local LOG_FILE="$SCRIPT_DIR/headscale.log"
+    local TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
     
-    echo "访问地址:"
-    echo "  UI 界面: http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}/web/"
-    echo "  API 端口: http://${SERVER_HOST}:${UI_API_PORT:-8081}"
-    echo "  Headscale HTTP: http://${SERVER_HOST}:${HEADSCALE_PORT:-8080}"
-    echo "  Headscale HTTPS: https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8443} (用于 Tailscale 客户端)"
+    {
+        echo ""
+        echo "=========================================="
+        echo "部署完成！"
+        echo "=========================================="
+        echo ""
+        echo "配置文件位置:"
+        echo "  Headscale: ${HEADSCALE_CONFIG_DIR}"
+        echo "  Caddy: ${CADDY_CONFIG_DIR}"
+        echo ""
+        echo "必需开放的端口（云服务器安全组）:"
+        echo "  ✅ ${CADDY_HTTPS_PORT:-8080}/tcp - Headscale HTTPS (Tailscale 客户端连接)"
+        echo "  ✅ ${HEADSCALE_STUN_PORT:-3478}/udp - STUN/DERP (NAT 穿透)"
+        echo ""
+        echo "可选端口:"
+        echo "  ○ ${HEADSCALE_METRICS_PORT:-9090}/tcp - Metrics 监控"
+        echo ""
+        echo "访问地址:"
+        echo "  Headscale HTTPS: https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8080} (Tailscale 客户端)"
+        echo "  Metrics:         http://${SERVER_HOST}:${HEADSCALE_METRICS_PORT:-9090}/metrics"
+        echo ""
+        echo "证书信息:"
+        echo "  证书路径: ${TLS_CERT_PATH:-/opt/headscale/config/tls.crt}"
+        echo "  项目证书: ${SCRIPT_DIR}/headscale.crt (可导入 Windows)"
+        echo "  私钥路径: ${TLS_KEY_PATH:-/opt/headscale/config/tls.key}"
+        echo "  注意: Windows 客户端首次连接时需要手动信任证书"
+        echo "        访问 https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8080} 并选择'继续访问'"
+        echo ""
+        echo "DERP 服务器:"
+        echo "  状态: 已启用"
+        echo "  STUN 端口: ${HEADSCALE_STUN_PORT:-3478}/udp"
+        echo ""
+        echo "常用命令:"
+        echo "  # 创建用户"
+        echo "  sudo docker exec headscale headscale users create <用户名>"
+        echo ""
+        echo "  # 创建预授权密钥"
+        echo "  sudo docker exec headscale headscale preauthkeys create --user <用户ID> --reusable --expiration 8760h"
+        echo ""
+        echo "  # 创建 API Key"
+        echo "  sudo docker exec headscale headscale apikeys create --expiration 87600h"
+        echo ""
+        echo "  # 查看节点列表"
+        echo "  sudo docker exec headscale headscale nodes list"
+        echo ""
+        echo "  # 查看路由"
+        echo "  sudo docker exec headscale headscale routes list"
+        echo ""
+        echo "Tailscale 客户端连接命令:"
+        echo "  tailscale up --login-server=https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8080} --authkey=<预授权密钥>"
+        echo ""
+        echo "部署时间: ${TIMESTAMP}"
+    } | tee "$LOG_FILE"
+    
     echo ""
-    echo "证书信息:"
-    echo "  证书路径: ${TLS_CERT_PATH:-/opt/headscale/config/tls.crt}"
-    echo "  私钥路径: ${TLS_KEY_PATH:-/opt/headscale/config/tls.key}"
-    echo "  注意: Windows 客户端首次连接时会提示证书不受信任，需要手动接受"
-    echo "        建议先访问 https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8443} 手动信任证书"
-    echo ""
-    echo "UI 认证:"
-    echo "  用户名: ${UI_AUTH_USER:-admin}"
-    echo "  密码: ${UI_AUTH_PASSWORD:-headscale}"
-    echo "  密码哈希: ${PASSWORD_HASH}"
-    echo ""
-    echo "DERP 服务器:"
-    echo "  状态: 已启用"
-    echo "  STUN 端口: ${HEADSCALE_STUN_PORT:-3478}/udp"
-    echo ""
-    echo "创建 API Key:"
-    echo "  sudo docker exec headscale headscale apikeys create --expiration 87600h"
-    echo ""
-    echo "创建 PreAuth Key:"
-    echo "  sudo docker exec headscale headscale users create <用户名>"
-    echo "  sudo docker exec headscale headscale preauthkeys create --user <ID> --reusable --expiration 8760h"
-    echo ""
+    echo "✓ 部署信息已保存到: $LOG_FILE"
 }
 
 main() {

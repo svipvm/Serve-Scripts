@@ -2,57 +2,10 @@
     auto_https off
 }
 
-# HTTP 端口 - 基础 API 和重定向
+# HTTP 端口 - 基础服务
 :80 {
-    @api path /api/*
-    handle @api {
-        reverse_proxy headscale:${HEADSCALE_PORT}
-    }
-    
     handle {
-        respond "Not Found" 404
-    }
-}
-
-# UI 端口 - 提供 headscale-ui，API 通过 /api 路径代理
-:${UI_HTTP_PORT} {
-    basic_auth {
-        ${UI_AUTH_USER} ${PASSWORD_HASH}
-    }
-    
-    # API 请求代理到 headscale
-    handle_path /api/* {
-        reverse_proxy headscale:${HEADSCALE_PORT}
-    }
-    
-    # 静态资源和其他请求代理到 headscale-ui
-    handle {
-        reverse_proxy headscale-ui:8080 {
-            header_up -Authorization
-        }
-    }
-}
-
-# API 端口 - 直接访问 Headscale (HTTP，用于内部)
-:${UI_API_PORT} {
-    @preflight method OPTIONS
-    
-    handle @preflight {
-        header Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT}"
-        header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        header Access-Control-Allow-Headers "Authorization, Content-Type"
-        header Access-Control-Allow-Credentials "true"
-        header Access-Control-Max-Age "86400"
-        respond "" 204
-    }
-    
-    handle {
-        reverse_proxy headscale:${HEADSCALE_PORT} {
-            header_down +Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT}"
-            header_down +Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-            header_down +Access-Control-Allow-Headers "Authorization, Content-Type"
-            header_down +Access-Control-Allow-Credentials "true"
-        }
+        respond "Headscale Server" 200
     }
 }
 
@@ -60,5 +13,5 @@
 :${CADDY_HTTPS_PORT} {
     tls /opt/headscale/config/tls.crt /opt/headscale/config/tls.key
     
-    reverse_proxy headscale:${HEADSCALE_PORT}
+    reverse_proxy headscale:8081
 }
