@@ -16,6 +16,8 @@ services:
     volumes:
       - /opt/headscale/config/config.yaml:/etc/headscale/config.yaml:ro
       - /opt/headscale/config/derp.yaml:/etc/headscale/derp.yaml:ro
+      - /opt/headscale/config/tls.crt:/opt/headscale/config/tls.crt:ro
+      - /opt/headscale/config/tls.key:/opt/headscale/config/tls.key:ro
       - /opt/headscale/data:/var/lib/headscale
       - /opt/headscale/run:/var/run/headscale
     networks:
@@ -30,7 +32,8 @@ services:
     container_name: headscale-ui
     restart: unless-stopped
     environment:
-      - HS_SERVER=http://${SERVER_HOST}:${UI_API_PORT:-8081}
+      # 让前端通过 Caddy 代理访问 API，解决 HTTPS 问题
+      - HS_SERVER=http://${SERVER_HOST}:${UI_HTTP_PORT}
     depends_on:
       - headscale
     networks:
@@ -45,12 +48,14 @@ services:
     restart: unless-stopped
     ports:
       - "${CADDY_HTTP_PORT:-80}:80"
-      - "${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_HTTPS_PORT:-8443}:8443"
       - "${UI_HTTP_PORT:-8008}:8008"
       - "${UI_API_PORT:-8081}:8081"
     volumes:
       - /opt/caddy/config/Caddyfile:/etc/caddy/Caddyfile:ro
       - /opt/caddy/data:/data
+      - /opt/headscale/config/tls.crt:/opt/headscale/config/tls.crt:ro
+      - /opt/headscale/config/tls.key:/opt/headscale/config/tls.key:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "headscale:${HEADSCALE_IP:-172.28.0.10}"

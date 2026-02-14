@@ -53,6 +53,34 @@ create_directories() {
     echo "✓ 目录创建完成"
 }
 
+generate_tls_certificates() {
+    local TLS_ENABLED="${TLS_ENABLED:-true}"
+    local TLS_CERT="${TLS_CERT_PATH:-/opt/headscale/config/tls.crt}"
+    local TLS_KEY="${TLS_KEY_PATH:-/opt/headscale/config/tls.key}"
+    
+    if [ "$TLS_ENABLED" = "true" ]; then
+        echo ""
+        echo "生成 TLS 自签名证书..."
+        
+        if [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
+            openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+                -keyout "$TLS_KEY" \
+                -out "$TLS_CERT" \
+                -subj "/CN=${SERVER_HOST}" \
+                -addext "subjectAltName=IP:${SERVER_HOST},DNS:${SERVER_HOST}"
+            
+            chmod 600 "$TLS_KEY"
+            chmod 644 "$TLS_CERT"
+            
+            echo "✓ 生成自签名证书 (有效期 10 年)"
+            echo "  证书: $TLS_CERT"
+            echo "  私钥: $TLS_KEY"
+        else
+            echo "✓ 使用现有证书"
+        fi
+    fi
+}
+
 generate_headscale_config() {
     echo ""
     echo "生成 Headscale 配置文件..."
@@ -76,6 +104,9 @@ generate_headscale_config() {
     sed -i "s|\${DERP_IPV6}|${DERP_IPV6:-\"\"}|g" "$OUTPUT"
     sed -i "s|\${DNS_MAGIC_DNS}|${DNS_MAGIC_DNS:-false}|g" "$OUTPUT"
     sed -i "s|\${DNS_BASE_DOMAIN}|${DNS_BASE_DOMAIN:-example.com}|g" "$OUTPUT"
+    # TLS 配置留空，由 Caddy 处理 HTTPS
+    sed -i "s|\${TLS_CERT_PATH}||g" "$OUTPUT"
+    sed -i "s|\${TLS_KEY_PATH}||g" "$OUTPUT"
     
     echo "✓ 生成 config.yaml"
 }
@@ -122,6 +153,7 @@ generate_caddy_config() {
     sed -i "s|\${HEADSCALE_PORT}|${HEADSCALE_PORT:-8080}|g" "$OUTPUT"
     sed -i "s|\${UI_HTTP_PORT}|${UI_HTTP_PORT:-8008}|g" "$OUTPUT"
     sed -i "s|\${UI_API_PORT}|${UI_API_PORT:-8081}|g" "$OUTPUT"
+    sed -i "s|\${CADDY_HTTPS_PORT}|${CADDY_HTTPS_PORT:-8443}|g" "$OUTPUT"
     sed -i "s|\${UI_AUTH_USER}|${UI_AUTH_USER:-admin}|g" "$OUTPUT"
     sed -i "s|\${PASSWORD_HASH}|${PASSWORD_HASH}|g" "$OUTPUT"
     
@@ -164,6 +196,7 @@ configure_firewall() {
     ufw allow ${HEADSCALE_STUN_PORT:-3478}/udp comment 'Headscale STUN' || true
     ufw allow ${UI_HTTP_PORT:-8008}/tcp comment 'Headscale UI' || true
     ufw allow ${UI_API_PORT:-8081}/tcp comment 'Headscale UI API' || true
+    ufw allow ${CADDY_HTTPS_PORT:-8443}/tcp comment 'Headscale HTTPS' || true
     
     echo "✓ 防火墙规则已配置"
 }
@@ -198,10 +231,21 @@ show_info() {
     echo "  Headscale: ${HEADSCALE_CONFIG_DIR}"
     echo "  Caddy: ${CADDY_CONFIG_DIR}"
     echo ""
+    local TLS_ENABLED="${TLS_ENABLED:-true}"
+    local PROTOCOL="https"
+    [ "$TLS_ENABLED" != "true" ] && PROTOCOL="http"
+    
     echo "访问地址:"
-    echo "  UI: http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}/web/"
-    echo "  API: http://${SERVER_HOST}:${UI_API_PORT:-8081}"
-    echo "  服务: http://${SERVER_HOST}:${HEADSCALE_PORT:-8080}"
+    echo "  UI 界面: http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}/web/"
+    echo "  API 端口: http://${SERVER_HOST}:${UI_API_PORT:-8081}"
+    echo "  Headscale HTTP: http://${SERVER_HOST}:${HEADSCALE_PORT:-8080}"
+    echo "  Headscale HTTPS: https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8443} (用于 Tailscale 客户端)"
+    echo ""
+    echo "证书信息:"
+    echo "  证书路径: ${TLS_CERT_PATH:-/opt/headscale/config/tls.crt}"
+    echo "  私钥路径: ${TLS_KEY_PATH:-/opt/headscale/config/tls.key}"
+    echo "  注意: Windows 客户端首次连接时会提示证书不受信任，需要手动接受"
+    echo "        建议先访问 https://${SERVER_HOST}:${CADDY_HTTPS_PORT:-8443} 手动信任证书"
     echo ""
     echo "UI 认证:"
     echo "  用户名: ${UI_AUTH_USER:-admin}"
@@ -233,26 +277,30 @@ main() {
     create_directories
     
     echo ""
-    echo "步骤 3/7: 生成 Headscale 配置"
+    echo "步骤 3/7: 生成 TLS 证书"
+    generate_tls_certificates
+    
+    echo ""
+    echo "步骤 4/7: 生成 Headscale 配置"
     generate_headscale_config
     
     echo ""
-    echo "步骤 4/7: 生成 DERP 和 Caddy 配置"
+    echo "步骤 5/7: 生成 DERP 和 Caddy 配置"
     generate_derp_config
     generate_caddy_config
-    
+
     echo ""
-    echo "步骤 5/7: 配置防火墙"
+    echo "步骤 6/7: 配置防火墙"
     configure_firewall
-    
+
     echo ""
-    echo "步骤 6/7: 检查环境并部署"
+    echo "步骤 7/7: 检查环境并部署"
     check_docker
     check_docker_compose
     deploy
-    
+
     echo ""
-    echo "步骤 7/7: 验证服务"
+    echo "步骤 8/8: 验证服务"
     sleep 3
     docker-compose ps
     

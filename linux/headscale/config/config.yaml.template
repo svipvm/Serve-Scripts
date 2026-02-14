@@ -218,6 +218,7 @@ tls_letsencrypt_challenge_type: HTTP-01
 tls_letsencrypt_listen: ":http"
 
 ## Use already defined certificates:
+# 留空表示不使用 TLS，由 Caddy 统一处理 HTTPS
 tls_cert_path: ""
 tls_key_path: ""
 
