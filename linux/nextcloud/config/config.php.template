@@ -1,0 +1,33 @@
+<?php
+$CONFIG = array (
+  'instanceid' => '',
+  'passwordsalt' => '',
+  'secret' => '',
+  'trusted_domains' => 
+  array (
+    0 => 'localhost',
+    1 => '${NEXTCLOUD_TRUSTED_DOMAIN}',
+  ),
+  'datadirectory' => '/var/www/data',
+  'dbtype' => 'mysql',
+  'version' => '',
+  'dbname' => '${MYSQL_DATABASE}',
+  'dbhost' => '${MYSQL_HOST}:${MYSQL_PORT}',
+  'dbport' => '${MYSQL_PORT}',
+  'dbtableprefix' => 'oc_',
+  'mysql.utf8mb4' => true,
+  'dbuser' => '${MYSQL_USER}',
+  'dbpassword' => '${MYSQL_PASSWORD}',
+  'installed' => false,
+  'memcache.local' => '\\OC\\Memcache\\Redis',
+  'memcache.distributed' => '\\OC\\Memcache\\Redis',
+  'redis' => 
+  array (
+    'host' => '${REDIS_HOST}',
+    'port' => '${REDIS_PORT}',
+  ),
+  'default_phone_region' => 'CN',
+  'log_type' => 'file',
+  'logfile' => '/var/www/html/data/nextcloud.log',
+  'loglevel' => 2,
+);

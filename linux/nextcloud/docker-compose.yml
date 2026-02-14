@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    ports:
+      - "${NEXTCLOUD_PORT}:80"
+    volumes:
+      - "${DATA_DIR}/data:/var/www/html/data"
+    depends_on:
+      - db
+      - redis
+    environment:
+      - MYSQL_HOST=172.26.0.20
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - REDIS_HOST=172.26.0.30
+    networks:
+      nextcloud-network:
+        ipv4_address: 172.26.0.10
+
+  db:
+    image: mariadb:latest
+    container_name: nextcloud-db
+    volumes:
+      - "${DATA_DIR}/mysql:/var/lib/mysql"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    networks:
+      nextcloud-network:
+        ipv4_address: 172.26.0.20
+
+  redis:
+    image: redis:alpine
+    container_name: nextcloud-redis
+    volumes:
+      - "${DATA_DIR}/redis:/data"
+    networks:
+      nextcloud-network:
+        ipv4_address: 172.26.0.30
+
+networks:
+  nextcloud-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.26.0.0/24
