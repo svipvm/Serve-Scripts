@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  hbbs:
+    image: ${RUSTDESK_IMAGE:-rustdesk/rustdesk-server:latest}
+    container_name: hbbs
+    restart: ${RESTART_POLICY:-always}
+    command: hbbs
+    network_mode: host
+    depends_on:
+      - hbbr
+    volumes:
+      - ${DATA_DIR:-/opt/rustdesk-server}/hbbs:/root
+    environment:
+      - KEY_FILE=${KEY_FILE:-id_ed25519}
+      - RELAY_SERVER=${RELAY_SERVER:-}
+
+  hbbr:
+    image: ${RUSTDESK_IMAGE:-rustdesk/rustdesk-server:latest}
+    container_name: hbbr
+    restart: ${RESTART_POLICY:-always}
+    command: hbbr
+    network_mode: host
+    volumes:
+      - ${DATA_DIR:-/opt/rustdesk-server}/hbbr:/root
+    environment:
+      - KEY_FILE=${KEY_FILE:-id_ed25519}
