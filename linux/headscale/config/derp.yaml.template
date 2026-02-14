@@ -1,0 +1,13 @@
+regions:
+  900:
+    regionid: 900
+    regioncode: "headscale"
+    regionname: "Headscale Embedded DERP"
+    nodes:
+      - name: "headscale-embedded"
+        regionid: 900
+        hostname: "${SERVER_HOST}"
+        stunport: ${HEADSCALE_STUN_PORT}
+        derpport: ${HEADSCALE_PORT}
+        ipv4: "${SERVER_HOST}"
+        insecure_for_tests: true

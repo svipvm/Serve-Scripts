@@ -4,9 +4,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
+TEMPLATE_DIR="$SCRIPT_DIR/config"
 
 HEADSCALE_CONFIG_DIR="/opt/headscale/config"
 CADDY_CONFIG_DIR="/opt/caddy/config"
+PASSWORD_HASH=""
 
 echo "=========================================="
 echo "Headscale 部署脚本"
@@ -55,58 +57,25 @@ generate_headscale_config() {
     echo ""
     echo "生成 Headscale 配置文件..."
     
-    cat > "${HEADSCALE_CONFIG_DIR}/config.yaml" << EOF
-server_url: http://${SERVER_HOST}:${HEADSCALE_PORT:-8080}
-listen_addr: 0.0.0.0:8080
-metrics_listen_addr: 0.0.0.0:9090
-grpc_listen_addr: 0.0.0.0:50443
-
-noise:
-  private_key_path: /var/lib/headscale/noise_private.key
-
-database:
-  type: sqlite
-  sqlite:
-    path: /var/lib/headscale/db.sqlite
-
-derp:
-  server:
-    enabled: true
-    region_id: ${DERP_REGION_ID:-999}
-    region_code: "${DERP_REGION_CODE:-headscale}"
-    region_name: "${DERP_REGION_NAME:-Headscale Embedded DERP}"
-    stun_listen_addr: "0.0.0.0:3478"
-    private_key_path: /var/lib/headscale/derp_server_private.key
-    automatically_add_embedded_derp_region: true
-    ipv4: "${SERVER_HOST}"
-  urls:
-    - https://controlplane.tailscale.com/derpmap/default
-  paths: []
-  auto_update_enabled: true
-  update_frequency: 24h
-
-prefixes:
-  v4: 100.64.0.0/10
-  v6: fd7a:115c:a1e0::/48
-  allocation: sequential
-
-dns:
-  magic_dns: false
-  override_local_dns: false
-  nameservers:
-    global: []
-
-log:
-  format: text
-  level: info
-
-disable_check_updates: true
-ephemeral_node_inactivity_timeout: 30m
-randomize_client_port: true
-
-unix_socket: /var/run/headscale/headscale.sock
-unix_socket_permission: "0770"
-EOF
+    local TEMPLATE="${TEMPLATE_DIR}/config.yaml.template"
+    local OUTPUT="${HEADSCALE_CONFIG_DIR}/config.yaml"
+    
+    if [ ! -f "$TEMPLATE" ]; then
+        echo "错误: 模板文件不存在: $TEMPLATE"
+        exit 1
+    fi
+    
+    cp "$TEMPLATE" "$OUTPUT"
+    
+    sed -i "s|\${SERVER_HOST}|${SERVER_HOST}|g" "$OUTPUT"
+    sed -i "s|\${HEADSCALE_PORT}|${HEADSCALE_PORT:-8080}|g" "$OUTPUT"
+    sed -i "s|\${DERP_ENABLED}|${DERP_ENABLED:-true}|g" "$OUTPUT"
+    sed -i "s|\${DERP_REGION_ID}|${DERP_REGION_ID:-999}|g" "$OUTPUT"
+    sed -i "s|\${DERP_REGION_CODE}|${DERP_REGION_CODE:-headscale}|g" "$OUTPUT"
+    sed -i "s|\${DERP_REGION_NAME}|${DERP_REGION_NAME:-Headscale Embedded DERP}|g" "$OUTPUT"
+    sed -i "s|\${DERP_IPV6}|${DERP_IPV6:-\"\"}|g" "$OUTPUT"
+    sed -i "s|\${DNS_MAGIC_DNS}|${DNS_MAGIC_DNS:-false}|g" "$OUTPUT"
+    sed -i "s|\${DNS_BASE_DOMAIN}|${DNS_BASE_DOMAIN:-example.com}|g" "$OUTPUT"
     
     echo "✓ 生成 config.yaml"
 }
@@ -115,21 +84,19 @@ generate_derp_config() {
     echo ""
     echo "生成 DERP 配置文件..."
     
-    cat > "${HEADSCALE_CONFIG_DIR}/derp.yaml" << EOF
-regions:
-  900:
-    regionid: 900
-    regioncode: "headscale"
-    regionname: "Headscale Embedded DERP"
-    nodes:
-      - name: "headscale-embedded"
-        regionid: 900
-        hostname: "${SERVER_HOST}"
-        stunport: ${HEADSCALE_STUN_PORT:-3478}
-        derpport: ${HEADSCALE_PORT:-8080}
-        ipv4: "${SERVER_HOST}"
-        insecure_for_tests: true
-EOF
+    local TEMPLATE="${TEMPLATE_DIR}/derp.yaml.template"
+    local OUTPUT="${HEADSCALE_CONFIG_DIR}/derp.yaml"
+    
+    if [ ! -f "$TEMPLATE" ]; then
+        echo "错误: 模板文件不存在: $TEMPLATE"
+        exit 1
+    fi
+    
+    cp "$TEMPLATE" "$OUTPUT"
+    
+    sed -i "s|\${SERVER_HOST}|${SERVER_HOST}|g" "$OUTPUT"
+    sed -i "s|\${HEADSCALE_STUN_PORT}|${HEADSCALE_STUN_PORT:-3478}|g" "$OUTPUT"
+    sed -i "s|\${HEADSCALE_PORT}|${HEADSCALE_PORT:-8080}|g" "$OUTPUT"
     
     echo "✓ 生成 derp.yaml"
 }
@@ -138,70 +105,25 @@ generate_caddy_config() {
     echo ""
     echo "生成 Caddy 配置文件..."
     
-    local UI_PASSWORD="${UI_AUTH_PASSWORD:-headscale}"
-    local PASSWORD_HASH='$2a$14$WBdqJBcNsSxNdolCWj7MS.armz2e2My2jiGToHMA/h6tVrtld54te'
+    local TEMPLATE="${TEMPLATE_DIR}/Caddyfile.template"
+    local OUTPUT="${CADDY_CONFIG_DIR}/Caddyfile"
     
-    if command -v caddy &> /dev/null; then
-        local HASH
-        HASH=$(caddy hash-password --plaintext "$UI_PASSWORD" 2>/dev/null) && PASSWORD_HASH="$HASH"
-    else
-        local HASH
-        HASH=$(docker run --rm caddy:2.10.2 caddy hash-password --plaintext "$UI_PASSWORD" 2>/dev/null) && PASSWORD_HASH="$HASH"
+    if [ ! -f "$TEMPLATE" ]; then
+        echo "错误: 模板文件不存在: $TEMPLATE"
+        exit 1
     fi
     
-    cat > "${CADDY_CONFIG_DIR}/Caddyfile" << EOF
-{
-    auto_https off
-}
-
-:80 {
-    @api path /api/*
-    handle @api {
-        reverse_proxy host.docker.internal:${HEADSCALE_PORT:-8080}
-    }
+    local UI_PASSWORD="${UI_AUTH_PASSWORD:-headscale}"
+    PASSWORD_HASH=$(docker run --rm caddy:2.10.2 caddy hash-password --plaintext "$UI_PASSWORD")
     
-    handle {
-        reverse_proxy headscale-ui:8080
-    }
-}
-
-:${UI_HTTP_PORT:-8008} {
-    basicauth {
-        ${UI_AUTH_USER:-admin} ${PASSWORD_HASH}
-    }
+    cp "$TEMPLATE" "$OUTPUT"
     
-    @web path /web*
-    handle @web {
-        reverse_proxy headscale-ui:8080
-    }
-    
-    handle {
-        redir /web/ permanent
-    }
-}
-
-:${UI_API_PORT:-8081} {
-    @preflight method OPTIONS
-    
-    handle @preflight {
-        header Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}"
-        header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        header Access-Control-Allow-Headers "Authorization, Content-Type"
-        header Access-Control-Allow-Credentials "true"
-        header Access-Control-Max-Age "86400"
-        respond "" 204
-    }
-    
-    handle {
-        reverse_proxy host.docker.internal:${HEADSCALE_PORT:-8080} {
-            header_down +Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT:-8008}"
-            header_down +Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-            header_down +Access-Control-Allow-Headers "Authorization, Content-Type"
-            header_down +Access-Control-Allow-Credentials "true"
-        }
-    }
-}
-EOF
+    sed -i "s|\${SERVER_HOST}|${SERVER_HOST}|g" "$OUTPUT"
+    sed -i "s|\${HEADSCALE_PORT}|${HEADSCALE_PORT:-8080}|g" "$OUTPUT"
+    sed -i "s|\${UI_HTTP_PORT}|${UI_HTTP_PORT:-8008}|g" "$OUTPUT"
+    sed -i "s|\${UI_API_PORT}|${UI_API_PORT:-8081}|g" "$OUTPUT"
+    sed -i "s|\${UI_AUTH_USER}|${UI_AUTH_USER:-admin}|g" "$OUTPUT"
+    sed -i "s|\${PASSWORD_HASH}|${PASSWORD_HASH}|g" "$OUTPUT"
     
     echo "✓ 生成 Caddyfile"
 }
@@ -284,6 +206,7 @@ show_info() {
     echo "UI 认证:"
     echo "  用户名: ${UI_AUTH_USER:-admin}"
     echo "  密码: ${UI_AUTH_PASSWORD:-headscale}"
+    echo "  密码哈希: ${PASSWORD_HASH}"
     echo ""
     echo "DERP 服务器:"
     echo "  状态: 已启用"

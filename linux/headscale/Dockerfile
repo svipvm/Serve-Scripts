@@ -45,12 +45,6 @@ RUN mkdir -p /var/run/headscale \
     && chown -R headscale:headscale /var/run/headscale \
     && chmod 770 /var/run/headscale
 
-COPY config/config.yaml /etc/headscale/config.yaml
-COPY config/derp.yaml /etc/headscale/derp.yaml
-
-RUN chown root:headscale /etc/headscale/config.yaml \
-    && chmod 640 /etc/headscale/config.yaml
-
 USER headscale
 
 EXPOSE 8080 9090 50443

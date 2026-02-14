@@ -5,7 +5,17 @@
 :80 {
     @api path /api/*
     handle @api {
-        reverse_proxy host.docker.internal:8080
+        reverse_proxy host.docker.internal:${HEADSCALE_PORT}
+    }
+    
+    handle {
+        respond "Not Found" 404
+    }
+}
+
+:${UI_HTTP_PORT} {
+    basicauth {
+        ${UI_AUTH_USER} ${PASSWORD_HASH}
     }
     
     handle {
@@ -13,22 +23,11 @@
     }
 }
 
-:8008 {    
-    @web path /web*
-    handle @web {
-        reverse_proxy headscale-ui:8080
-    }
-    
-    handle {
-        redir /web/ permanent
-    }
-}
-
-:8081 {
+:${UI_API_PORT} {
     @preflight method OPTIONS
     
     handle @preflight {
-        header Access-Control-Allow-Origin "http://127.0.0.1:8008"
+        header Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT}"
         header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         header Access-Control-Allow-Headers "Authorization, Content-Type"
         header Access-Control-Allow-Credentials "true"
@@ -37,8 +36,8 @@
     }
     
     handle {
-        reverse_proxy host.docker.internal:8080 {
-            header_down +Access-Control-Allow-Origin "http://127.0.0.1:8008"
+        reverse_proxy host.docker.internal:${HEADSCALE_PORT} {
+            header_down +Access-Control-Allow-Origin "http://${SERVER_HOST}:${UI_HTTP_PORT}"
             header_down +Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
             header_down +Access-Control-Allow-Headers "Authorization, Content-Type"
             header_down +Access-Control-Allow-Credentials "true"
